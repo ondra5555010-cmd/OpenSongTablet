@@ -1895,6 +1895,27 @@ public class PerformanceFragment extends Fragment {
         }
     }
 
+    // Used by the OpenSong-compatible web API. Unlike Nearby section changes,
+    // this is allowed even when this device is the host.
+    public void selectSectionFromApi(int position) {
+        if (mainActivityInterface.getSong().getFiletype().equals("PDF") &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP &&
+                pdfPageAdapter != null && pdfPageAdapter.getItemCount() > position && position >= 0) {
+            pdfPageAdapter.sectionSelected(position);
+            pdfPageAdapter.clickOnSection(position);
+            performanceShowSection(position);
+        } else if (mainActivityInterface.getMode().equals(mode_stage)) {
+            mainActivityInterface.getMainHandler().postDelayed(() -> {
+                if (stageSectionAdapter != null && stageSectionAdapter.getItemCount() > position && position >= 0 && myView != null && myView.recyclerView != null) {
+                    stageSectionAdapter.clickOnSection(position);
+                    performanceShowSection(position);
+                }
+            }, 50);
+        } else {
+            performanceShowSection(position);
+        }
+    }
+
     // Get the width of the song display (to check it fits)
     public int getSongWidth() {
         if (myView!=null) {

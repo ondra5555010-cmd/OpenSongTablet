@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.garethevans.church.opensongtablet.R;
 import com.garethevans.church.opensongtablet.interfaces.DisplayInterface;
 import com.garethevans.church.opensongtablet.interfaces.MainActivityInterface;
+import com.garethevans.church.opensongtablet.webserver.KtorServer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -303,6 +304,7 @@ public class StageSectionAdapter extends RecyclerView.Adapter<StageViewHolder> {
 
             // Send and update notification to Performance Fragment via the MainActivity
             displayInterface.performanceShowSection(position);
+            KtorServer.INSTANCE.pushRefresh();
         } catch (Exception e) {
             // Likely the number of sections isn't what was expected (probably via Nearby)
             e.printStackTrace();

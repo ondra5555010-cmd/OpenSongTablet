@@ -70,6 +70,8 @@ android {
             matchingFallbacks = ['release']
         }
         debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
             minifyEnabled = false
             shrinkResources = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -222,6 +224,3 @@ dependencies {
     add("withWearWearApp", project(":wear"))
 }
 
-kotlin {
-    jvmToolchain(17)
-}

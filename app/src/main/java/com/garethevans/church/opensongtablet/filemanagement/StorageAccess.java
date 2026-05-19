@@ -2359,6 +2359,11 @@ public class StorageAccess {
         Uri dirUri = getUriForItem(currentDir, currentSubDir, "");
         Uri desireduri = getUriForItem(currentDir, currentSubDir, newFolder);
 
+        if (dirUri == null || desireduri == null) {
+            Log.d(TAG, "createFolder skipped because storage URI is not available");
+            return false;
+        }
+
         // We need to check if the desired uri, if it exists, is a folder (as it might be a file with the same name)
         boolean isDirectory = false;
         if (lollipopOrLater()) {

@@ -56,8 +56,10 @@ public class NonOpenSongSQLiteHelper extends SQLiteOpenHelper {
                 "Settings", "", SQLite.NON_OS_DATABASE_NAME);
         Log.d(TAG,"finished trying to get appDB local");
 
-        // If the userDB uri doesn't exist, copy the appDB now it is ready
-        if (!mainActivityInterface.getStorageAccess().uriExists(userDB)) {
+        // If the userDB uri doesn't exist, copy the appDB now it is ready.
+        // On first launch the user may not have granted an OpenSong folder yet;
+        // in that case userDB is null and the app-private database is enough.
+        if (userDB != null && !mainActivityInterface.getStorageAccess().uriExists(userDB)) {
             initialiseUserDB = true;
             copyUserDatabase();
         }
@@ -80,6 +82,10 @@ public class NonOpenSongSQLiteHelper extends SQLiteOpenHelper {
         boolean copied;
         if (appDB==null || userDB==null || appDBFile==null) {
             getDatabaseUris();
+        }
+
+        if (userDB == null) {
+            return;
         }
 
         if (mainActivityInterface.getStorageAccess().uriTreeValid(userDB) && mainActivityInterface.getStorageAccess().uriExists(userDB) &&
@@ -114,6 +120,11 @@ public class NonOpenSongSQLiteHelper extends SQLiteOpenHelper {
         // In case there was an issue and the Uris are null, get them again
         if ((appDB==null || userDB==null) && !initialiseUserDB) {
             getDatabaseUris();
+        }
+
+        if (userDB == null) {
+            Log.d(TAG, "copyUserDatabase() skipped: no user storage URI available");
+            return false;
         }
 
         Log.d(TAG,"copyUserDatabase() check uriTreeValid for userDB");

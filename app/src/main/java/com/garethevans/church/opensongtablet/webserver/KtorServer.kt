@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.garethevans.church.opensongtablet.interfaces.MainActivityInterface
 import io.ktor.http.ContentType
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.applicationEngineEnvironment
@@ -13,15 +14,19 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
 import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -29,6 +34,8 @@ import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.Collections
+import kotlin.math.max
+import kotlin.math.min
 
 object KtorServer {
     private const val TAG = "KtorServer"
@@ -206,11 +213,61 @@ object KtorServer {
                                     call.respondText(html, ContentType.Text.Html)
                                 }
 
+                                get("/presentation/slide/current") {
+                                    appendOpenSongApiHeaders(call)
+                                    call.respondText(
+                                        buildCurrentSlideXml(mainActivityInterface),
+                                        ContentType.Text.Xml
+                                    )
+                                }
+
+                                get("/presentation/status") {
+                                    appendOpenSongApiHeaders(call)
+                                    call.respondText(
+                                        buildStatusJson(mainActivityInterface, port),
+                                        ContentType.Application.Json
+                                    )
+                                }
+
+                                post("/presentation/slide/next") {
+                                    runOnMainThread(mainActivityInterface) {
+                                        moveSection(mainActivityInterface, forward = true)
+                                    }
+                                    pushRefresh()
+                                    appendOpenSongApiHeaders(call)
+                                    call.respondText("OK", ContentType.Text.Plain)
+                                }
+
+                                post("/presentation/slide/previous") {
+                                    runOnMainThread(mainActivityInterface) {
+                                        moveSection(mainActivityInterface, forward = false)
+                                    }
+                                    pushRefresh()
+                                    appendOpenSongApiHeaders(call)
+                                    call.respondText("OK", ContentType.Text.Plain)
+                                }
+
                                 // The WebSocket "Channel"
                                 webSocket("/updates") {
                                     sessions.add(this)
                                     try {
-                                        for (frame in incoming) { /* keepalive */
+                                        for (frame in incoming) {
+                                            if (frame is Frame.Text) {
+                                                respondToWebSocketRequest(frame.readText(), mainActivityInterface)
+                                            }
+                                        }
+                                    } finally {
+                                        sessions.remove(this)
+                                    }
+                                }
+
+                                webSocket("/ws") {
+                                    sessions.add(this)
+                                    try {
+                                        for (frame in incoming) {
+                                            if (frame is Frame.Text) {
+                                                respondToWebSocketRequest(frame.readText(), mainActivityInterface)
+                                            }
                                         }
                                     } finally {
                                         sessions.remove(this)
@@ -282,6 +339,232 @@ object KtorServer {
                 }
             }
         }
+    }
+
+    private suspend fun DefaultWebSocketServerSession.respondToWebSocketRequest(
+        message: String,
+        mainActivityInterface: MainActivityInterface
+    ) {
+        val request = message.trim().removePrefix("/")
+        if (request == "presentation/slide/current") {
+            send(buildCurrentSlideXml(mainActivityInterface))
+        }
+    }
+
+    private suspend fun runOnMainThread(
+        mainActivityInterface: MainActivityInterface,
+        action: () -> Unit
+    ) {
+        val completed = CompletableDeferred<Unit>()
+        mainActivityInterface.mainHandler.post {
+            try {
+                action()
+            } catch (e: Exception) {
+                Log.e(TAG, "OpenSong API action failed: ${e.message}")
+            } finally {
+                completed.complete(Unit)
+            }
+        }
+        completed.await()
+        delay(200)
+    }
+
+    private fun moveSection(
+        mainActivityInterface: MainActivityInterface,
+        forward: Boolean
+    ) {
+        val song = mainActivityInterface.song ?: return
+        val sectionCount = getSectionCount(mainActivityInterface)
+        if (sectionCount <= 0) return
+
+        val current = getCurrentSection(song)
+        val next = if (forward) {
+            min(current + 1, sectionCount - 1)
+        } else {
+            max(current - 1, 0)
+        }
+
+        if (next == current) return
+
+        if (song.filetype == "PDF") {
+            song.pdfPageCurrent = next
+        } else {
+            song.currentSection = next
+        }
+
+        mainActivityInterface.presenterSettings.currentSection = next
+        if (isStageMode(mainActivityInterface)) {
+            mainActivityInterface.performanceFragment?.selectSectionFromApi(next)
+        } else {
+            mainActivityInterface.performanceFragment?.performanceShowSection(next)
+        }
+    }
+
+    private fun getSectionCount(mainActivityInterface: MainActivityInterface): Int {
+        val song = mainActivityInterface.song ?: return 0
+        return if (song.filetype == "PDF") {
+            song.pdfPageCount
+        } else {
+            ensureSongSections(mainActivityInterface)
+            song.presoOrderSongSections.size
+        }
+    }
+
+    private fun getCurrentSection(song: com.garethevans.church.opensongtablet.songprocessing.Song): Int {
+        return if (song.filetype == "PDF") song.pdfPageCurrent else song.currentSection
+    }
+
+    private fun buildCurrentSlideXml(mainActivityInterface: MainActivityInterface): String {
+        val song = mainActivityInterface.song
+            ?: return "<slides><slide><title></title><body></body></slide></slides>"
+
+        ensureSongSections(mainActivityInterface)
+
+        val sections = song.presoOrderSongSections
+        val current = getCurrentSection(song).coerceIn(0, max(sections.size - 1, 0))
+        val rawSection = sections.getOrNull(current).orEmpty()
+        val headingAndBody = splitHeadingAndBody(mainActivityInterface, rawSection)
+        val title = song.title.orEmpty().ifBlank { headingAndBody.first }
+        val body = headingAndBody.second
+
+        return """
+            <slides>
+              <slide>
+                <title>${xmlEscape(title)}</title>
+                <body>${xmlEscape(body)}</body>
+              </slide>
+            </slides>
+        """.trimIndent()
+    }
+
+    private fun buildStatusJson(
+        mainActivityInterface: MainActivityInterface,
+        port: Int
+    ): String {
+        val song = mainActivityInterface.song
+        val hasSong = song != null
+
+        if (hasSong) {
+            ensureSongSections(mainActivityInterface)
+        }
+
+        val sectionCount = if (hasSong) getSectionCount(mainActivityInterface) else 0
+        val currentSection = song?.let { getCurrentSection(it) } ?: -1
+        val safeCurrentSection = if (sectionCount > 0) {
+            currentSection.coerceIn(0, sectionCount - 1)
+        } else {
+            currentSection
+        }
+
+        return """
+            {
+              "service": "OpenSongTablet",
+              "api": "opensong-compatible",
+              "serverRunning": ${server != null},
+              "port": $port,
+              "webServerIp": "${jsonEscape(mainActivityInterface.webServer?.ip.orEmpty())}",
+              "webSocketSessions": ${synchronized(sessions) { sessions.size }},
+              "mode": "${jsonEscape(mainActivityInterface.mode.orEmpty())}",
+              "stageMode": ${isStageMode(mainActivityInterface)},
+              "hasSong": $hasSong,
+              "song": {
+                "title": "${jsonEscape(song?.title.orEmpty())}",
+                "folder": "${jsonEscape(song?.folder.orEmpty())}",
+                "filename": "${jsonEscape(song?.filename.orEmpty())}",
+                "filetype": "${jsonEscape(song?.filetype.orEmpty())}",
+                "currentSection": $safeCurrentSection,
+                "sectionCount": $sectionCount
+              },
+              "routes": [
+                "/presentation/status",
+                "/presentation/slide/current",
+                "/presentation/slide/next",
+                "/presentation/slide/previous",
+                "/ws"
+              ]
+            }
+        """.trimIndent()
+    }
+
+    private fun ensureSongSections(mainActivityInterface: MainActivityInterface) {
+        val song = mainActivityInterface.song ?: return
+        if (song.filetype == "XML" && song.presoOrderSongSections.isEmpty()) {
+            mainActivityInterface.processSong.processSongIntoSections(
+                song,
+                isStageMode(mainActivityInterface) || isPresenterMode(mainActivityInterface)
+            )
+        }
+    }
+
+    private fun isStageMode(mainActivityInterface: MainActivityInterface): Boolean {
+        return mainActivityInterface.mode == "Stage"
+    }
+
+    private fun isPresenterMode(mainActivityInterface: MainActivityInterface): Boolean {
+        return mainActivityInterface.mode == "Presenter"
+    }
+
+    private fun splitHeadingAndBody(
+        mainActivityInterface: MainActivityInterface,
+        rawSection: String
+    ): Pair<String, String> {
+        var section = rawSection
+            .replace(mainActivityInterface.processSong.columnbreak_string, "")
+            .replace("____groupline____", "\n")
+            .trim()
+
+        var heading = ""
+        if (section.startsWith("[") && section.contains("]")) {
+            val end = section.indexOf("]")
+            heading = section.substring(0, end + 1)
+            section = section.substring(end + 1).trim()
+            heading = mainActivityInterface.processSong.beautifyHeading(heading)
+                .replace("[", "")
+                .replace("]", "")
+                .trim()
+        }
+
+        val body = section
+            .lines()
+            .filterNot { line -> line.trimStart().startsWith(".") }
+            .map { line ->
+                line.trim()
+                    .removePrefix(";")
+                    .replace(chordMarkerRegex, "")
+                    .replace(Regex("[ \\t]{2,}"), " ")
+                    .replace(Regex("\\s+([,.;:!?])"), "$1")
+                    .trimEnd()
+            }
+            .joinToString("\n")
+            .trim()
+
+        return heading to body
+    }
+
+    private val chordMarkerRegex =
+        Regex("\\[[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?[0-9]*(?:/[A-G](?:#|b)?)?]")
+
+    private fun xmlEscape(value: String): String {
+        return value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
+    }
+
+    private fun jsonEscape(value: String): String {
+        return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+    }
+
+    private fun appendOpenSongApiHeaders(call: ApplicationCall) {
+        call.response.headers.append("Access-Control-Allow-Private-Network", "true")
+        call.response.headers.append("Access-Control-Allow-Origin", "*")
     }
 
 }
