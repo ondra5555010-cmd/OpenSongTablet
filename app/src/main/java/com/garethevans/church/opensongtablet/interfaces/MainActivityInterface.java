@@ -102,6 +102,7 @@ public interface MainActivityInterface {
     void initialiseActivity();
     void initialiseStartVariables();
     void updateSizes(int width, int height);
+    void selectSection(int i);
     int[] getDisplayMetrics();
     float getDisplayDensity();
     Handler getMainHandler();

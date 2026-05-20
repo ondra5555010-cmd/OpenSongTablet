@@ -426,6 +426,7 @@ public class PresenterFragment extends Fragment {
                 mainActivityInterface.getPresenterSettings().setBlackscreenOn(b);
                 displayInterface.updateDisplay("showBlackscreen");
             }
+            mainActivityInterface.getWebServer().updateKtor();
         }
     }
 

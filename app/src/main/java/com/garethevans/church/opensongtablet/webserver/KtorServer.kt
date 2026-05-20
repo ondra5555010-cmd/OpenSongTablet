@@ -393,7 +393,11 @@ object KtorServer {
         }
 
         mainActivityInterface.presenterSettings.currentSection = next
-        if (isStageMode(mainActivityInterface)) {
+        if (isPresenterMode(mainActivityInterface)) {
+            mainActivityInterface.mainHandler.post {
+                mainActivityInterface.selectSection(next)
+            }
+        } else if (isStageMode(mainActivityInterface)) {
             mainActivityInterface.performanceFragment?.selectSectionFromApi(next)
         } else {
             mainActivityInterface.performanceFragment?.performanceShowSection(next)
@@ -415,8 +419,13 @@ object KtorServer {
     }
 
     private fun buildCurrentSlideXml(mainActivityInterface: MainActivityInterface): String {
+        val presentationOutput = getPresentationOutput(mainActivityInterface)
+        if (presentationOutput != "normal") {
+            return emptySlideXml(presentationOutput)
+        }
+
         val song = mainActivityInterface.song
-            ?: return "<slides><slide><title></title><body></body></slide></slides>"
+            ?: return emptySlideXml()
 
         ensureSongSections(mainActivityInterface)
 
@@ -502,6 +511,23 @@ object KtorServer {
 
     private fun isPresenterMode(mainActivityInterface: MainActivityInterface): Boolean {
         return mainActivityInterface.mode == "Presenter"
+    }
+
+    private fun getPresentationOutput(mainActivityInterface: MainActivityInterface): String {
+        if (!isPresenterMode(mainActivityInterface)) {
+            return "normal"
+        }
+
+        val presenterSettings = mainActivityInterface.presenterSettings
+        return when {
+            presenterSettings.blackscreenOn -> "black"
+            presenterSettings.logoOn || presenterSettings.blankscreenOn -> "blank"
+            else -> "normal"
+        }
+    }
+
+    private fun emptySlideXml(display: String = "blank"): String {
+        return "<slides><slide><display>${xmlEscape(display)}</display><title></title><body></body></slide></slides>"
     }
 
     private fun splitHeadingAndBody(

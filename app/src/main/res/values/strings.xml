@@ -53,7 +53,7 @@
     <string name="amp">Amp</string>
     <string name="app">App</string>
     <string name="app_id" translatable="false">4E2B0891</string>
-    <string name="app_name" translatable="false">OpenSongApp</string>
+    <string name="app_name" translatable="false">OpenSongApp - ViewerCompatible</string>
     <string name="app_specific_file">A file specific to OpenSongApp</string>
     <string name="appearance_change">Adjusts appearance</string>
     <string name="apply_changes">Apply changes</string>

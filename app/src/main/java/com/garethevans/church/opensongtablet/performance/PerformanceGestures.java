@@ -1542,6 +1542,7 @@ public class PerformanceGestures {
                 displayInterface.updateDisplay("showBlankscreen");
             }
         }
+        mainActivityInterface.getWebServer().updateKtor();
     }
 
     // The checks
